@@ -1,0 +1,159 @@
+import org.jetbrains.changelog.Changelog
+import org.jetbrains.changelog.ChangelogSectionUrlBuilder
+import org.jetbrains.changelog.ExtensionsKt
+import org.jetbrains.intellij.platform.gradle.TestFrameworkType
+
+plugins {
+    id 'java' // Java support
+//    alias(libs.plugins.kotlin)
+    alias(libs.plugins.intelliJPlatform) // IntelliJ Platform Gradle Plugin
+    alias(libs.plugins.changelog) // Gradle Changelog Plugin
+    alias(libs.plugins.kover) // Gradle Kover Plugin
+}
+
+group = providers.gradleProperty("pluginGroup").get()
+version = providers.gradleProperty("pluginVersion").get()
+
+repositories {
+    mavenCentral()
+    intellijPlatform {
+        defaultRepositories()
+        intellijDependencies()
+    }
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+dependencies {
+    intellijPlatform {
+        pycharmCommunity libs.versions.pycharmCommunity
+        bundledPlugin 'PythonCore'
+        testFramework TestFrameworkType.Platform.INSTANCE
+        instrumentationTools()
+    }
+    testImplementation libs.junit
+}
+
+intellijPlatformTesting {
+    runIde
+    testIde
+    testIdeUi
+    testIdePerformance
+}
+
+intellijPlatform {
+    version = providers.gradleProperty("pluginVersion").get()
+//    description = providers.fileContents(layout.projectDirectory.file("README.md")).asText.get().with( text -> {
+//        def start = "<!-- Plugin description -->"
+//        def end = "<!-- Plugin description end -->"
+//        if (!text.contains(start) && text.contains(end)) {
+//            throw new GradleException("Plugin description section not found in README.md:\n$start ... $end")
+//        }
+//        def extracted = text.split('\n').findAll { it.contains(start) || it.contains(end) }.join('\n')
+//        return "<p>" + extracted + "</p>"
+//    })
+
+    patchPluginXml {
+        changeNotes = provider {
+            changelog.renderItem(
+                    changelog
+                            .getUnreleased()
+                            .withHeader(false)
+                            .withEmptySections(false),
+                    Changelog.OutputType.HTML
+            )
+        }
+        description = providers.fileContents(layout.projectDirectory.file("README.md")).asText.get().with( text -> {
+            def start = "<!-- Plugin description -->"
+            def end = "<!-- Plugin description end -->"
+            if (!text.contains(start) && text.contains(end)) {
+                throw new GradleException("Plugin description section not found in README.md:\n$start ... $end")
+            }
+            def extracted = text.split('\n').findAll { it.contains(start) || it.contains(end) }.join('\n')
+            return "<p>" + extracted + "</p>"
+        })
+    }
+
+    signPlugin {
+        certificateChain = providers.environmentVariable("CERTIFICATE_CHAIN")
+        privateKey = providers.environmentVariable("PRIVATE_KEY")
+        password = providers.environmentVariable("PRIVATE_KEY_PASSWORD")
+    }
+
+    publishing {
+        token = providers.gradleProperty("intellijPlatformPublishingToken")
+    }
+
+    pluginVerification {
+        ides {
+            recommended()
+        }
+    }
+
+    changelog {
+        groups = []
+        repositoryUrl = providers.gradleProperty("pluginRepositoryUrl").get()
+    }
+
+
+//    def changelog = project.changelog
+//    changeNotes = providers.gradleProperty("pluginVersion").get().with { pluginVersion ->
+//            changelog.getOrNull(pluginVersion)?.withHeader(false)?.withEmptySections(false) ?: changelog.getUnreleased()
+//    }
+}
+
+changelog {
+    version = "1.0.0"
+    path = file("CHANGELOG.md").canonicalPath
+    header = "[${-> version.get()}] - ${ExtensionsKt.date("yyyy-MM-dd")}"
+    headerParserRegex = ~/(\d+\.\d+)/
+    introduction = """
+        My awesome project that provides a lot of useful features, like:
+
+        - Feature 1
+        - Feature 2
+        - and Feature 3
+    """.stripIndent()
+    itemPrefix = "-"
+    keepUnreleasedSection = true
+    unreleasedTerm = "[Unreleased]"
+    groups = ["Added", "Changed", "Deprecated", "Removed", "Fixed", "Security"]
+    lineSeparator = "\n"
+    combinePreReleases = true
+    sectionUrlBuilder = { repositoryUrl, currentVersion, previousVersion, isUnreleased -> "foo" } as ChangelogSectionUrlBuilder
+}
+
+//publishing {
+//    token = providers.environmentVariable("PUBLISH_TOKEN").get()
+//    channels = providers.gradleProperty("pluginVersion").get().split('-')[1]?.split('.')[0] ?: "default"
+//}
+
+wrapper {
+    gradleVersion = providers.gradleProperty("gradleVersion").get()
+}
+
+publishPlugin {
+    dependsOn patchChangelog
+}
+
+//intellijPlatformTesting {
+//    runIde {
+//        register("runIdeForUiTests") {
+//            task ->
+//                task.jvmArgumentProviders += {
+//                    [
+//                            "-Drobot-server.port=8082",
+//                            "-Dide.mac.message.dialogs.as.sheets=false",
+//                            "-Djb.privacy.policy.text=<!--999.999-->",
+//                            "-Djb.consents.confirmation.enabled=false"
+//                    ]
+//                }
+//                plugins {
+//                    robotServerPlugin()
+//                }
+//        }
+//    }
+//}
