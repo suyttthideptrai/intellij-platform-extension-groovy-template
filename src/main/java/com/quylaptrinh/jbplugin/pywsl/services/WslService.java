@@ -1,18 +1,22 @@
 package com.quylaptrinh.jbplugin.pywsl.services;
 
+import com.intellij.execution.ExecutionException;
+import com.intellij.execution.process.ProcessOutput;
 import com.intellij.execution.wsl.WSLDistribution;
 import com.intellij.execution.wsl.WslDistributionManager;
 import com.intellij.openapi.components.Service;
+import com.intellij.openapi.components.Service.Level;
 import com.intellij.openapi.diagnostic.DefaultLogger;
 import com.intellij.openapi.diagnostic.Logger;
-import com.quylaptrinh.jbplugin.pywsl.exception.NoDefaultWslDistException;
-import com.quylaptrinh.jbplugin.pywsl.exception.WslNotRunningException;
+import com.quylaptrinh.jbplugin.pywsl.exception.DistroNotLoadedException;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.UUID;
 
-@Service(Service.Level.PROJECT)
+@Service(Level.PROJECT)
 public final class WslService {
 
   /**
@@ -21,7 +25,7 @@ public final class WslService {
   static Logger log = DefaultLogger.getInstance(WslService.class);
 
   private static WslService wslDriver;
-  private WSLDistribution systemWslDistribution;
+  private WSLDistribution selectedDistro;
   private boolean isWslLoaded = false;
 
   private WslService() {
@@ -54,15 +58,10 @@ public final class WslService {
       throw new RuntimeException("No WSL distributions found!");
     }
 
-    try {
-      String dfDistName = this.getDefaultWslDistro();
-    } catch (WslNotRunningException | RuntimeException e) {
-      return null;
+    this.selectedDistro = this.getDefaultWslDistro().orElse(null);
+    if (Objects.nonNull(this.selectedDistro)) {
+      this.isWslLoaded = true;
     }
-
-//    return distributions.stream().anyMatch(wslDistribution -> {
-//      wslDistribution.getId()
-//    })
     return null;
   }
 
@@ -71,11 +70,10 @@ public final class WslService {
    *
    * @return name as `String`
    */
-  private String getDefaultWslDistro() throws RuntimeException, WslNotRunningException {
+  public Optional<WSLDistribution> getDefaultWslDistro() {
 
-    String defaultDistName = "";
-    boolean hasDefaultDistro = false;
-    boolean isDefaultDistRunning = false;
+    List<WSLDistribution> distributions = WslDistributionManager.getInstance()
+        .getInstalledDistributions();
 
     try {
       String[] pArgs = {WSLDistribution.WSL_EXE, "-l", "-v"};
@@ -83,41 +81,68 @@ public final class WslService {
       BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
 
       String line;
+      String defaultDistName = UUID.randomUUID().toString();
       while ((line = reader.readLine()) != null) {
+
         if (line.startsWith("*")) {  // The default distro is marked with '*'
-          hasDefaultDistro = true;
           line = line.replace('*', ' ');
           line = line.trim(); // chim 3==D
           String[] distInfo = line.split("\\s++");
           int nameCol = 0;
-          int stateCol = 1;
           //int verCol = 2;
           defaultDistName = distInfo[nameCol];
-          if (distInfo[stateCol].equalsIgnoreCase("running")) {
-            isDefaultDistRunning = true;
-          }
           break;
         }
       }
-      if (!hasDefaultDistro) {
-        throw new NoDefaultWslDistException();
-      }
-      if (isDefaultDistRunning) {
-        if (defaultDistName.isEmpty()) {
-          String msg = "Could not get default distro name, result returned empty string";
-          throw new RuntimeException(msg);
+
+      for (WSLDistribution distribution : distributions) {
+        if (Objects.equals(distribution.getId(), defaultDistName)) {
+          return Optional.of(distribution);
         }
-      } else {
-        log.warn("WARNING: Default WSL dist found but not running, "
-            + "may need to config wsl distro manually");
-        throw new WslNotRunningException(defaultDistName);
       }
     } catch (Exception e) {
-      if (e instanceof WslNotRunningException) {
-        throw (WslNotRunningException) e;
-      }
       log.error("ERROR: Unexpected error while getting default wsl distro.", e);
     }
-    return defaultDistName;
+    return Optional.empty();
+  }
+
+  public boolean isWslLoaded() {
+    return this.isWslLoaded;
+  }
+
+  public WSLDistribution getDistro() throws DistroNotLoadedException {
+    if (!isWslLoaded) {
+      throw new DistroNotLoadedException();
+    }
+    return this.selectedDistro;
+  }
+
+  public void setDistro(WSLDistribution dist) {
+    this.selectedDistro = dist;
+    if (this.isUsable()) {
+      this.isWslLoaded = true;
+    } else {
+      this.selectedDistro = null;
+      this.isWslLoaded = false;
+    }
+  }
+
+  public boolean isUsable() {
+    if (Objects.isNull(this.selectedDistro)) {
+      return false;
+    }
+    try {
+      // Check if the distribution is installed by attempting to get its version
+      int version = this.selectedDistro.getVersion();
+      if (version <= 0) {
+        return false;
+      }
+
+      // Check if a simple command can be executed successfully
+      ProcessOutput output = this.selectedDistro.executeOnWsl(5000, "echo", "test");
+      return output.getExitCode() == 0;
+    } catch (ExecutionException e) {
+      throw new RuntimeException(e);
+    }
   }
 }
